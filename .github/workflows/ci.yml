@@ -4,48 +4,76 @@ on:
   push:
     branches: [ "main" ]
 
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
+  # ------------------- CI (BUILD + TEST) -------------------
   build-test:
+
     runs-on: ubuntu-latest
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16
         env:
-          POSTGRES_DB: employeedb
+          POSTGRES_DB: employee
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready"
+          --health-cmd="pg_isready -U postgres"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Run Tests
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: maven-${{ hashFiles('**/pom.xml') }}
+
+      - name: Run Tests (test profile)
         run: mvn clean test -Dspring.profiles.active=test
 
       - name: Build JAR
         run: mvn clean package -DskipTests
 
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+
+
+  # ------------------- DOCKER BUILD -------------------
   docker-build:
 
     needs: build-test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -56,7 +84,8 @@ jobs:
       - name: Login to DockerHub
         run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
+      - name: Tag Docker Image
+        run: docker tag employeemanagement:latest ${{ secrets.DOCKER_USERNAME }}/employeemanagement:latest
+
       - name: Push Docker Image
-        run: |
-          docker tag employeemanagement:latest ${{ secrets.DOCKER_USERNAME }}/employeemanagement:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/employeemanagement:latest
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/employeemanagement:latest
