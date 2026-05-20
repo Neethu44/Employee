@@ -2,6 +2,9 @@ FROM eclipse-temurin:17
 
 WORKDIR /app
 
+RUN useradd -m appuser
+USER appuser
+
 COPY target/employeemanagement-0.0.1-SNAPSHOT.jar app.jar
 
 EXPOSE 8080
